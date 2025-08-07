@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  kittentts-server:
+    build: .
+    ports:
+      - "8001:8001"
+    environment:
+      - KITTENTTS_HOST=0.0.0.0
+      - KITTENTTS_PORT=8001
+      - KITTENTTS_LOG_LEVEL=INFO
+      - KITTENTTS_MAX_TEXT_LENGTH=4000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      # Optional: Mount a volume for persistent data if needed
+      - ./logs:/app/logs
+    networks:
+      - kittentts-network
+
+networks:
+  kittentts-network:
+    driver: bridge
