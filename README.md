@@ -129,6 +129,8 @@ The server maps OpenAI-compatible voice names to KittenTTS voices:
    - Set TTS Engine to "OpenAI"
    - Set API Base URL to: `http://localhost:8001/v1`
    - Leave API Key empty (not required)
+   - Input one of the voices mapped to OpenAI Voice (e.g. shimmer) in the TTS Voice Field
+   - Leave TTS model field as tts-1-hd
 
 3. **Test the integration:**
    - Try using TTS in Open WebUI chat
