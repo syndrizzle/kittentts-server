@@ -26,14 +26,33 @@ logger = logging.getLogger(__name__)
 tts_model = None
 
 def init_model():
-    """Initialize the KittenTTS model"""
+    """Initialize the KittenTTS model with GPU acceleration"""
     global tts_model
     if tts_model is None:
         try:
-            logger.info("Loading KittenTTS model...")
-            import kittentts
-            tts_model = kittentts.KittenTTS()
-            logger.info("KittenTTS model loaded successfully!")
+            logger.info("Loading KittenTTS model with GPU acceleration...")
+            
+            # Try to use our GPU-accelerated version first
+            try:
+                from gpu_kitten_tts import GPUKittenTTS
+                tts_model = GPUKittenTTS()
+                
+                # Log performance info
+                perf_info = tts_model.get_performance_info()
+                logger.info(f"GPU-accelerated KittenTTS loaded successfully!")
+                logger.info(f"Execution providers: {perf_info['providers']}")
+                logger.info(f"GPU enabled: {perf_info['gpu_enabled']}")
+                logger.info(f"Available voices: {perf_info['voices_count']}")
+                
+            except Exception as gpu_error:
+                logger.warning(f"Failed to load GPU-accelerated version: {gpu_error}")
+                logger.info("Falling back to standard KittenTTS...")
+                
+                # Fallback to standard KittenTTS
+                import kittentts
+                tts_model = kittentts.KittenTTS()
+                logger.info("Standard KittenTTS model loaded successfully!")
+                
         except ImportError as e:
             logger.error("KittenTTS not found. Please install KittenTTS first.")
             raise ImportError("KittenTTS package not found. Please install it first.") from e
@@ -69,7 +88,7 @@ class TTSRequest(BaseModel):
     input: str  # Text to synthesize
     voice: str = "alloy"  # Voice selection
     response_format: Optional[Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]] = "mp3"
-    speed: Optional[float] = 2.0  # Speed of speech (0.25 to 4.0)
+    speed: Optional[float] = 1.0  # Speed of speech (0.25 to 4.0)
 
     class Config:
         schema_extra = {
@@ -271,6 +290,16 @@ async def health_check():
                     "voices_available": len(getattr(tts_model, 'available_voices', [])),
                     "model_type": str(type(tts_model).__name__)
                 }
+                
+                # Add GPU performance info if available
+                if hasattr(tts_model, 'get_performance_info'):
+                    perf_info = tts_model.get_performance_info()
+                    model_info.update({
+                        "gpu_acceleration": perf_info.get('gpu_enabled', False),
+                        "execution_providers": perf_info.get('providers', []),
+                        "gpu_provider": perf_info.get('gpu_provider', 'none')
+                    })
+                
             except Exception as e:
                 logger.warning(f"Could not get model info: {e}")
         
@@ -282,7 +311,8 @@ async def health_check():
             "supported_formats": ["wav", "mp3"],
             "config": {
                 "max_text_length": Config.MAX_TEXT_LENGTH,
-                "available_voices": len(Config.VOICE_MAPPING)
+                "available_voices": len(Config.VOICE_MAPPING),
+                "gpu_acceleration_enabled": Config.USE_GPU
             }
         }
     except Exception as e:
@@ -291,6 +321,53 @@ async def health_check():
             "status": "unhealthy",
             "error": str(e),
             "model_loaded": False
+        }
+
+@app.get("/gpu/status")
+async def gpu_status():
+    """Get detailed GPU acceleration status"""
+    try:
+        if tts_model is None:
+            init_model()
+        
+        # Get performance info if available
+        if hasattr(tts_model, 'get_performance_info'):
+            perf_info = tts_model.get_performance_info()
+            return {
+                "gpu_acceleration": {
+                    "enabled": perf_info.get('gpu_enabled', False),
+                    "provider": perf_info.get('gpu_provider', 'auto'),
+                    "active_providers": perf_info.get('providers', []),
+                    "onnx_threads": perf_info.get('onnx_threads', 'auto')
+                },
+                "model_info": {
+                    "type": str(type(tts_model).__name__),
+                    "model_path": perf_info.get('model_path', 'unknown'),
+                    "voices_count": perf_info.get('voices_count', 0)
+                },
+                "system_info": {
+                    "available_providers": [],  # Will be populated below
+                }
+            }
+        else:
+            return {
+                "gpu_acceleration": {
+                    "enabled": False,
+                    "provider": "standard_kittentts",
+                    "active_providers": ["CPUExecutionProvider"],
+                    "note": "Using standard KittenTTS without GPU acceleration"
+                },
+                "model_info": {
+                    "type": str(type(tts_model).__name__),
+                    "voices_count": len(getattr(tts_model, 'available_voices', []))
+                }
+            }
+            
+    except Exception as e:
+        logger.error(f"GPU status check failed: {e}")
+        return {
+            "error": str(e),
+            "gpu_acceleration": {"enabled": False}
         }
 
 if __name__ == "__main__":

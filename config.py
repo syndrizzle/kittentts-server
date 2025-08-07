@@ -15,6 +15,11 @@ class Config:
     # Text processing limits
     MAX_TEXT_LENGTH = int(os.getenv("KITTENTTS_MAX_TEXT_LENGTH", 4000))
     
+    # GPU acceleration settings
+    USE_GPU = os.getenv("KITTENTTS_USE_GPU", "true").lower() in ("true", "1", "yes", "on")
+    GPU_PROVIDER = os.getenv("KITTENTTS_GPU_PROVIDER", "auto")  # auto, coreml, cuda, cpu
+    ONNX_THREADS = int(os.getenv("KITTENTTS_ONNX_THREADS", 0))  # 0 = auto
+    
     # Voice mapping from OpenAI names to KittenTTS voices
     VOICE_MAPPING = {
         "alloy": "expr-voice-5-m",      # Male voice
@@ -26,7 +31,7 @@ class Config:
     }
     
     # Default audio settings
-    DEFAULT_SAMPLE_RATE = 22050
+    DEFAULT_SAMPLE_RATE = 44100
     DEFAULT_SPEED = 1.0
     MIN_SPEED = 0.25
     MAX_SPEED = 4.0

@@ -1,6 +1,8 @@
 # KittenTTS Server
 
-A FastAPI-based TTS (Text-to-Speech) server that provides OpenAI-compatible API endpoints using KittenTTS. This server can be easily integrated with Open WebUI and other applications that support OpenAI's TTS API format.
+A FastAPI-based TTS (Text-to-Speech) server that provides OpenAI-compatible API endpoints using [KittenTTS](https://github.com/KittenML/KittenTTS). This server can be easily integrated with Open WebUI and other applications that support OpenAI's TTS API format.
+
+**note: you will need to have KittenTTS separately installed on your system**
 
 ## Features
 
@@ -127,6 +129,8 @@ The server maps OpenAI-compatible voice names to KittenTTS voices:
    - Set TTS Engine to "OpenAI"
    - Set API Base URL to: `http://localhost:8001/v1`
    - Leave API Key empty (not required)
+   - Input one of the voices mapped to OpenAI Voice (e.g. shimmer) in the TTS Voice Field
+   - Leave TTS model field as tts-1-hd
 
 3. **Test the integration:**
    - Try using TTS in Open WebUI chat
@@ -139,6 +143,42 @@ The server maps OpenAI-compatible voice names to KittenTTS voices:
 - `KITTENTTS_HOST`: Server host (default: "0.0.0.0")
 - `KITTENTTS_PORT`: Server port (default: 8001)
 - `KITTENTTS_LOG_LEVEL`: Logging level (default: "info")
+- `KITTENTTS_USE_GPU`: Enable GPU acceleration (default: "true")
+- `KITTENTTS_GPU_PROVIDER`: GPU provider preference (default: "auto")
+- `KITTENTTS_ONNX_THREADS`: ONNX Runtime threads (default: 0 = auto)
+
+### GPU Acceleration
+
+The server automatically detects and uses GPU acceleration when available:
+
+**Apple Silicon (M1/M2/M3/M4):**
+- Uses CoreML execution provider for GPU/Neural Engine acceleration
+- Automatically enabled on macOS with Apple Silicon
+
+**NVIDIA CUDA:**
+- Uses CUDA execution provider when CUDA is available
+- Requires CUDA runtime and ONNX Runtime GPU package
+
+**Intel/AMD Systems:**
+- Falls back to CPU execution with optimized threading
+- Can use OpenVINO if available
+
+**Configuration Options:**
+```bash
+# Enable/disable GPU acceleration
+export KITTENTTS_USE_GPU=true
+
+# Force specific provider (auto, coreml, cuda, cpu)
+export KITTENTTS_GPU_PROVIDER=auto
+
+# Set number of CPU threads (0 = auto-detect)
+export KITTENTTS_ONNX_THREADS=4
+```
+
+**Check GPU Status:**
+```bash
+curl http://localhost:8001/gpu/status
+```
 
 ### Custom Configuration
 

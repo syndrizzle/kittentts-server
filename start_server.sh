@@ -87,11 +87,15 @@ fi
 export KITTENTTS_HOST=${KITTENTTS_HOST:-"0.0.0.0"}
 export KITTENTTS_PORT=${KITTENTTS_PORT:-"8001"}
 export KITTENTTS_LOG_LEVEL=${KITTENTTS_LOG_LEVEL:-"INFO"}
+export KITTENTTS_USE_GPU=${KITTENTTS_USE_GPU:-"true"}
+export KITTENTTS_GPU_PROVIDER=${KITTENTTS_GPU_PROVIDER:-"auto"}
 
 print_status "Server configuration:"
 echo "  Host: $KITTENTTS_HOST"
 echo "  Port: $KITTENTTS_PORT"
 echo "  Log Level: $KITTENTTS_LOG_LEVEL"
+echo "  GPU Acceleration: $KITTENTTS_USE_GPU"
+echo "  GPU Provider: $KITTENTTS_GPU_PROVIDER"
 
 print_success "Starting server..."
 echo "=================================================="
