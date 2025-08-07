@@ -9,6 +9,7 @@ A FastAPI-based TTS (Text-to-Speech) server that provides OpenAI-compatible API 
 - 🔌 OpenAI-compatible TTS API endpoints
 - 🗣️ Multiple voice options with voice mapping
 - ⚡ Fast and efficient speech synthesis using KittenTTS
+- ⚡ GPU Accelleration for Apple Silicon and Cuda
 - 🎛️ Configurable speech speed (0.25x to 4.0x)
 - 📊 Health check and model status endpoints
 - 🔧 Easy integration with Open WebUI
