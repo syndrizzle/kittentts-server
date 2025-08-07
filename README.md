@@ -1,6 +1,8 @@
 # KittenTTS Server
 
-A FastAPI-based TTS (Text-to-Speech) server that provides OpenAI-compatible API endpoints using KittenTTS. This server can be easily integrated with Open WebUI and other applications that support OpenAI's TTS API format.
+A FastAPI-based TTS (Text-to-Speech) server that provides OpenAI-compatible API endpoints using [KittenTTS](https://github.com/KittenML/KittenTTS). This server can be easily integrated with Open WebUI and other applications that support OpenAI's TTS API format.
+
+**note: you will need to have KittenTTS separately installed on your system**
 
 ## Features
 
