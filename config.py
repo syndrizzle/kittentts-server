@@ -13,7 +13,10 @@ class Config:
     LOG_LEVEL = os.getenv("KITTENTTS_LOG_LEVEL", "INFO")
     
     # Text processing limits
-    MAX_TEXT_LENGTH = int(os.getenv("KITTENTTS_MAX_TEXT_LENGTH", 4000))
+    MAX_TEXT_LENGTH = int(os.getenv("KITTENTTS_MAX_TEXT_LENGTH", 4000))  # Legacy limit for backward compatibility
+    MAX_TOTAL_CHARS = int(os.getenv("KITTENTTS_MAX_TOTAL_CHARS", 50000))  # Absolute maximum to prevent abuse
+    MAX_CHARS_PER_CHUNK = int(os.getenv("KITTENTTS_MAX_CHARS_PER_CHUNK", 1200))  # Optimal chunk size for TTS
+    ENABLE_CHUNKING = os.getenv("KITTENTTS_ENABLE_CHUNKING", "true").lower() in ("true", "1", "yes", "on")
     
     # GPU acceleration settings
     USE_GPU = os.getenv("KITTENTTS_USE_GPU", "true").lower() in ("true", "1", "yes", "on")

@@ -54,7 +54,9 @@ Returns server health status and model information.
   "supported_formats": ["wav", "mp3"],
   "config": {
     "max_text_length": 4000,
-    "available_voices": 6
+    "available_voices": 6,
+    "max_total_chars": 50000,
+    "chunking_enabled": true
   }
 }
 ```
@@ -139,7 +141,7 @@ Generates audio from text input using KittenTTS.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | model | string | Yes | - | TTS model to use ("tts-1" or "tts-1-hd") |
-| input | string | Yes | - | Text to convert to speech (max 4000 chars) |
+| input | string | Yes | - | Text to convert to speech (max 50000 chars with chunking) |
 | voice | string | No | "alloy" | Voice to use for synthesis |
 | response_format | string | No | "mp3" | Audio format ("wav", "mp3") |
 | speed | float | No | 1.0 | Speech speed (0.25 to 4.0) |
@@ -168,6 +170,13 @@ All endpoints return appropriate HTTP status codes and error messages:
 ```json
 {
   "detail": "Input text cannot be empty"
+}
+```
+
+### 413 Payload Too Large
+```json
+{
+  "detail": "Text exceeds maximum allowed length of 50000 characters"
 }
 ```
 
@@ -231,8 +240,71 @@ if response.status_code == 200:
     with open("output.wav", "wb") as f:
         f.write(response.content)
     print("Audio saved to output.wav")
+    
+    # Read chunking information from response headers
+    chunks_processed = response.headers.get("X-Chunks-Processed")
+    text_length = response.headers.get("X-Text-Length")
+    
+    if chunks_processed:
+        print(f"Text was processed in {chunks_processed} chunks")
+    if text_length:
+        print(f"Total text length: {text_length} characters")
 else:
     print(f"Error: {response.status_code} - {response.text}")
+```
+
+## Text Chunking and Large Input Handling
+
+The KittenTTS server includes intelligent text chunking capabilities to handle large text inputs efficiently.
+
+### How Chunking Works
+
+- **Automatic Detection**: When text exceeds the chunk size limit (default: 1200 characters), the server automatically splits it into smaller chunks
+- **Smart Boundaries**: Text is split at natural boundaries (paragraphs, sentences, word boundaries) to maintain speech flow
+- **Seamless Audio**: Individual chunks are processed separately and concatenated with small silence gaps for natural playback (silence duration is implementation-defined)
+- **Progress Tracking**: Response headers include information about chunks processed
+
+### Configuration Options
+
+The following environment variables control chunking behavior:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KITTENTTS_MAX_TOTAL_CHARS` | 50000 | Absolute maximum characters allowed (returns 413 if exceeded) |
+| `KITTENTTS_MAX_CHARS_PER_CHUNK` | 1200 | Optimal chunk size for TTS processing |
+| `KITTENTTS_ENABLE_CHUNKING` | true | Enable/disable chunking feature |
+| `KITTENTTS_MAX_TEXT_LENGTH` | 4000 | Legacy limit for backward compatibility |
+
+### Response Headers for Chunked Requests
+
+When chunking is used, additional headers are included:
+
+- `X-Chunks-Processed`: Number of chunks the text was split into
+- `X-Text-Length`: Total length of the input text
+
+### Error Handling
+
+- **400 Bad Request**: Invalid input (empty, too short, etc.)
+- **413 Payload Too Large**: Text exceeds `KITTENTTS_MAX_TOTAL_CHARS` limit
+- **500 Internal Server Error**: Processing failure in any chunk
+
+### Example: Large Text Processing
+
+```bash
+curl -X POST "http://localhost:8001/v1/audio/speech" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "tts-1-hd",
+    "input": "This is a very long text that will be automatically split into multiple chunks for processing. The server will handle this intelligently by splitting at sentence boundaries and then concatenating the resulting audio segments with small silence gaps for natural playback...",
+    "voice": "nova"
+  }' \
+  --output large_speech.wav
+```
+
+The response will include headers like:
+```
+X-Chunks-Processed: 3
+X-Text-Length: 2847
 ```
 
 ## OpenAI Compatibility
@@ -246,3 +318,4 @@ The `/v1/audio/speech` endpoint is designed to be compatible with OpenAI's TTS A
 3. **Voices**: Maps OpenAI voice names to KittenTTS voices
 4. **Formats**: Currently supports WAV and MP3 (limited MP3 support)
 5. **Additional Endpoints**: Provides extra endpoints like `/health` and `/v1/audio/voices`
+6. **Text Limits**: Supports much larger text inputs (up to 50,000 characters) with automatic chunking
