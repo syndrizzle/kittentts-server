@@ -8,7 +8,9 @@ import io
 import os
 import tempfile
 import logging
-from typing import Literal, Optional
+import numpy as np
+from typing import Literal, Optional, Any, Tuple
+from dataclasses import dataclass
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 from contextlib import asynccontextmanager
@@ -17,6 +19,17 @@ import soundfile as sf
 import uvicorn
 
 from config import Config
+from text_processor import TextChunker, validate_text_input
+
+@dataclass
+class AudioData:
+    array: Any
+    sample_rate: int
+    dtype: Any
+    shape: Tuple[int, ...]
+    
+    def __array__(self):
+        return self.array
 
 # Configure logging
 logging.basicConfig(level=getattr(logging, Config.LOG_LEVEL.upper()))
@@ -147,19 +160,21 @@ async def list_models():
 @app.post("/v1/audio/speech")
 async def create_speech(request: TTSRequest):
     """
-    Generate speech from text using KittenTTS
+    Generate speech from text using KittenTTS with intelligent chunking
     Compatible with OpenAI TTS API format
     """
     try:
-        # Validate input
-        if not request.input.strip():
-            raise HTTPException(status_code=400, detail="Input text cannot be empty")
-        
-        if len(request.input) > Config.MAX_TEXT_LENGTH:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Input text too long. Maximum length is {Config.MAX_TEXT_LENGTH} characters"
-            )
+        # Enhanced input validation
+        is_valid, error_msg = validate_text_input(request.input, Config.MAX_TOTAL_CHARS)
+        if not is_valid:
+            if "too long" in error_msg.lower() and len(request.input) > Config.MAX_TOTAL_CHARS:
+                # Return 413 for absurdly large requests
+                raise HTTPException(
+                    status_code=413, 
+                    detail=f"Request entity too large. {error_msg}. Consider breaking your text into smaller requests."
+                )
+            else:
+                raise HTTPException(status_code=400, detail=error_msg)
         
         # Initialize model if not already done
         if tts_model is None:
@@ -168,16 +183,84 @@ async def create_speech(request: TTSRequest):
         
         # Map voice and validate speed
         kitten_voice = Config.VOICE_MAPPING.get(request.voice, "expr-voice-5-m")
-        # Clamp speed to acceptable range
-        speed = max(0.25, min(4.0, request.speed))
+        speed = Config.clamp_speed(request.speed)
+        
+        # Determine if chunking is needed
+        text_length = len(request.input)
+        needs_chunking = Config.ENABLE_CHUNKING and text_length > Config.MAX_CHARS_PER_CHUNK
         
         logger.info(
-            f"Generating speech - Text: '{request.input[:50]}...', "
-            f"Voice: {kitten_voice}, Speed: {speed}, Format: {request.response_format}"
+            f"Processing text - Length: {text_length}, Voice: {kitten_voice}, "
+            f"Speed: {speed}, Format: {request.response_format}, Chunking: {needs_chunking}"
         )
         
-        # Generate speech
-        audio_data = tts_model.generate(request.input, voice=kitten_voice, speed=speed)
+        if needs_chunking:
+            # Use chunking for large texts
+            chunker = TextChunker(max_chunk_size=Config.MAX_CHARS_PER_CHUNK)
+            chunks = chunker.chunk_text(request.input)
+            
+            logger.info(f"Split text into {len(chunks)} chunks for processing")
+            
+            # Generate audio for each chunk
+            audio_segments = []
+            sample_rate = None
+            
+            for i, chunk in enumerate(chunks):
+                logger.debug(f"Processing chunk {i+1}/{len(chunks)}: '{chunk[:50]}...'")
+                
+                try:
+                    chunk_audio = tts_model.generate(chunk, voice=kitten_voice, speed=speed)
+                    
+                    # Store sample rate from first chunk
+                    if sample_rate is None:
+                        sample_rate = getattr(chunk_audio, 'sample_rate', 22050)
+                    
+                    # Convert to numpy array if needed
+                    if hasattr(chunk_audio, 'numpy'):
+                        chunk_audio = chunk_audio.numpy()
+                    elif not isinstance(chunk_audio, np.ndarray):
+                        chunk_audio = np.array(chunk_audio)
+                    
+                    audio_segments.append(chunk_audio)
+                    
+                except Exception as chunk_error:
+                    logger.error(f"Failed to process chunk {i+1}: {chunk_error}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to process text chunk {i+1}/{len(chunks)}: {str(chunk_error)}"
+                    )
+            
+            # Concatenate all audio segments
+            if audio_segments:
+                # Add small silence between chunks (0.1 seconds)
+                silence_samples = int(sample_rate * 0.1)
+                silence = np.zeros(silence_samples, dtype=audio_segments[0].dtype)
+                
+                # Interleave audio segments with silence
+                final_audio_parts = []
+                for i, segment in enumerate(audio_segments):
+                    final_audio_parts.append(segment)
+                    if i < len(audio_segments) - 1:  # Don't add silence after last segment
+                        final_audio_parts.append(silence)
+                
+                audio_data = np.concatenate(final_audio_parts)
+                
+                # Set sample rate attribute for compatibility
+                audio_data = AudioData(
+                    array=audio_data,
+                    sample_rate=sample_rate,
+                    dtype=audio_data.dtype,
+                    shape=audio_data.shape
+                )
+                
+                logger.info(f"Successfully concatenated {len(chunks)} chunks into final audio")
+            else:
+                raise HTTPException(status_code=500, detail="No audio segments were generated")
+                
+        else:
+            # Process as single chunk (original behavior)
+            logger.info(f"Processing as single chunk: '{request.input[:50]}...'")
+            audio_data = tts_model.generate(request.input, voice=kitten_voice, speed=speed)
         
         # Determine content type and filename based on format
         content_types = {
@@ -194,40 +277,43 @@ async def create_speech(request: TTSRequest):
         filename = f"speech.{format_ext}"
         
         # Convert audio data to bytes
-        if format_ext in ["wav", "mp3", None]:
-            # Create temporary file for WAV format
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
-                # Assuming audio_data is numpy array with sample rate info
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+            try:
+                # Get sample rate
                 sample_rate = getattr(audio_data, 'sample_rate', 22050)
-                sf.write(tmp_file.name, audio_data, sample_rate)
+                
+                # Convert to numpy array if needed
+                if hasattr(audio_data, '__array__'):
+                    audio_array = audio_data.__array__()
+                elif hasattr(audio_data, 'numpy'):
+                    audio_array = audio_data.numpy()
+                else:
+                    audio_array = np.array(audio_data)
+                
+                # Write audio file
+                sf.write(tmp_file.name, audio_array, sample_rate)
                 
                 # Read the audio file data
                 with open(tmp_file.name, "rb") as f:
                     audio_bytes = f.read()
-                
+                    
+            finally:
                 # Clean up temporary file
-                os.unlink(tmp_file.name)
-        else:
-            # For other formats, return WAV for now
-            # TODO: Add proper format conversion
-            logger.warning(f"Format '{format_ext}' not fully supported, returning WAV")
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
-                sample_rate = getattr(audio_data, 'sample_rate', 22050)
-                sf.write(tmp_file.name, audio_data, sample_rate)
-                
-                with open(tmp_file.name, "rb") as f:
-                    audio_bytes = f.read()
-                
-                os.unlink(tmp_file.name)
+                if os.path.exists(tmp_file.name):
+                    os.unlink(tmp_file.name)
         
-        logger.info(f"Successfully generated {len(audio_bytes)} bytes of audio")
+        # Log success with chunking info
+        chunk_info = f" ({len(chunks)} chunks)" if needs_chunking else ""
+        logger.info(f"Successfully generated {len(audio_bytes)} bytes of audio{chunk_info}")
         
         return Response(
             content=audio_bytes,
             media_type=content_type,
             headers={
                 "Content-Disposition": f"attachment; filename={filename}",
-                "Content-Length": str(len(audio_bytes))
+                "Content-Length": str(len(audio_bytes)),
+                "X-Chunks-Processed": str(len(chunks) if needs_chunking and 'chunks' in locals() else 1),
+                "X-Text-Length": str(text_length)
             }
         )
             
@@ -311,6 +397,9 @@ async def health_check():
             "supported_formats": ["wav", "mp3"],
             "config": {
                 "max_text_length": Config.MAX_TEXT_LENGTH,
+                "max_total_chars": Config.MAX_TOTAL_CHARS,
+                "max_chars_per_chunk": Config.MAX_CHARS_PER_CHUNK,
+                "chunking_enabled": Config.ENABLE_CHUNKING,
                 "available_voices": len(Config.VOICE_MAPPING),
                 "gpu_acceleration_enabled": Config.USE_GPU
             }
